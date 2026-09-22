@@ -2,29 +2,23 @@
 //
 // 1. Geocode with the U.S. Census geocoder (also returns county + incorporated city).
 // 2. Metro boundary + Portland city limits: live query to Metro's RLIS ArcGIS service.
-// 3. Transit district: point-in-polygon against GeoJSON files bundled in /data
-//    (RLIS "Transit Districts" layer + an LTD boundary file).
+// 3. Transit district: point-in-polygon against GeoJSON files bundled in /data.
+// 4. Flags addresses within NEAR_BOUNDARY_FEET of any relevant boundary.
 
-import transitDistricts from "../../data/transit-districts.json";
-import laneTransit from "../../data/lane-transit-district.json";
+import {
+  METRO_CITY_LIMITS,
+  METRO_DISTRICT,
+  NEAR_BOUNDARY_FEET,
+  attrsMention,
+  feetToNearestEdge,
+  laneTransit,
+  loadMetroShapes,
+  pointInFeature,
+  queryPoint,
+  transitFeatures,
+} from "../lib/geo.mjs";
 
-const CENSUS_URL =
-  "https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress";
-const METRO_BOUNDARY_LAYERS =
-  "https://gis.oregonmetro.gov/arcgis/rest/services/OpenData/BoundaryDataWebMerc/MapServer";
-const METRO_CITY_LIMITS = `${METRO_BOUNDARY_LAYERS}/0`;
-const METRO_DISTRICT = `${METRO_BOUNDARY_LAYERS}/3`;
-
-// Maps whatever name the boundary file uses to the district names on your list.
-// Order matters: more specific patterns first.
-const TRANSIT_NAME_RULES = [
-  [/south clackamas|molalla|sctd/i, "South Clackamas Transportation District (SCTD)"],
-  [/canby|\bcat\b/i, "Canby Area Transit (CAT)"],
-  [/wilsonville|smart/i, "Wilsonville Transit District (SMART)"],
-  [/sandy|\bsam\b/i, "Sandy Area Metro (SAM)"],
-  [/lane|ltd/i, "Lane Transit District (LTD)"],
-  [/tri[- ]?met|tri-county|tri county/i, "Tri-County Metropolitan Transportation District (TriMet)"],
-];
+const CENSUS_URL = "https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress";
 
 const json = (status, body) => ({
   statusCode: status,
@@ -62,11 +56,10 @@ export async function handler(event) {
 
   const lon = match.coordinates.x;
   const lat = match.coordinates.y;
+  const pt = [lon, lat];
   const geos = match.geographies || {};
   const state = geos.States?.[0]?.STUSAB || geos.States?.[0]?.NAME;
-  if (state && !/^(OR|Oregon)$/i.test(state)) {
-    notes.push("This address is outside Oregon.");
-  }
+  if (state && !/^(OR|Oregon)$/i.test(state)) notes.push("This address is outside Oregon.");
   const county = (geos.Counties?.[0]?.NAME || "").replace(/ County$/i, "") || null;
   const censusCity = (geos["Incorporated Places"]?.[0]?.NAME || "").replace(/ city$/i, "") || null;
 
@@ -81,39 +74,59 @@ export async function handler(event) {
     inMetro = metroHits.length > 0;
     inPortland = cityHits.some((f) => attrsMention(f.attributes, /^portland$/i));
   } catch (err) {
-    notes.push("Metro's map service didn't respond, so the Metro and Portland checks used backup data.");
+    notes.push("Metro's map service didn't respond, so the Portland check used Census data and the Metro check was skipped.");
     inPortland = censusCity ? /^portland$/i.test(censusCity) : false;
   }
 
-  // ---- 3. Transit district (bundled boundaries) ----
-  const transitFeatures = [
-    ...(transitDistricts.features || []),
-    ...(laneTransit.features || []),
-  ];
-  if (transitFeatures.length === 0) {
-    notes.push("Transit boundary files haven't been added yet. See README.");
-  }
-  const transitHits = transitFeatures.filter((f) => pointInFeature([lon, lat], f));
-  const transitNames = [...new Set(transitHits.map(normalizeTransitName))];
+  // ---- 3. Transit district ----
+  if (transitFeatures.length === 0) notes.push("Transit boundary files haven't been added yet. See README.");
+  const transitHits = transitFeatures.filter((f) => pointInFeature(pt, f));
+  const transitNames = [...new Set(transitHits.map((f) => f._name.label))];
   let transitDistrict = transitNames.length ? transitNames.join(" / ") : "None of the listed districts";
-  if (transitNames.length > 1) notes.push("Address falls in more than one transit district polygon. Confirm with Oregon DOR.");
+  if (transitNames.length > 1) notes.push("Address falls in more than one transit district. Confirm with Oregon DOR.");
 
   // Temporary fallback until an LTD boundary file is added to data/lane-transit-district.json.
   const hasLtdBoundary = (laneTransit.features || []).length > 0;
+  let ltdFallback = false;
   if (!transitNames.length && !hasLtdBoundary && /^lane$/i.test(county || "")) {
     transitDistrict = "Likely Lane Transit District (LTD)";
-    notes.push("Lane County address. The app doesn't have LTD's boundary yet, so confirm with the Oregon DOR transit tax lookup.");
+    ltdFallback = true;
+    notes.push("Lane County address. The app doesn't have LTD's boundary yet, so confirm with Oregon DOR.");
   }
 
-  // ---- 4. Business tax ----
+  // ---- 4. Near-boundary checks ----
+  const nearBoundaries = [];
+  const flagIfNear = (label, feet) => {
+    if (Number.isFinite(feet) && feet <= NEAR_BOUNDARY_FEET) {
+      nearBoundaries.push({ label, feet: Math.round(feet) });
+    }
+  };
+  // Transit: distance to the edge of each nearby district, reported per district.
+  for (const f of transitFeatures) {
+    flagIfNear(`${f._name.short} transit district edge`, feetToNearestEdge(pt, [f]));
+  }
+  try {
+    const { metro, portland } = await loadMetroShapes();
+    flagIfNear("Metro tax boundary", feetToNearestEdge(pt, metro.features));
+    flagIfNear("City of Portland limits", feetToNearestEdge(pt, portland.features));
+  } catch (err) {
+    notes.push("Couldn't load Metro boundary shapes, so the Metro and Portland edge checks were skipped.");
+  }
+  if (nearBoundaries.length) {
+    notes.push(`Within ${NEAR_BOUNDARY_FEET} feet of a boundary. Geocoded locations can be off by this much, so confirm with the official lookup.`);
+  }
+
+  // ---- 5. Business tax ----
   let businessTax;
   if (inPortland) businessTax = "Yes: City of Portland and Multnomah County";
   else if (/^multnomah$/i.test(county || "")) businessTax = "Yes: Multnomah County only (outside City of Portland)";
   else businessTax = "No";
 
-  if (match.tigerLine && /non_exact/i.test(match.matchType || "")) {
+  if (/non_exact/i.test(match.matchType || "")) {
     notes.push("The geocoder made an approximate match. Double-check the matched address.");
   }
+
+  const needsReview = notes.length > 0 || nearBoundaries.length > 0 || ltdFallback;
 
   return json(200, {
     input: address,
@@ -124,65 +137,10 @@ export async function handler(event) {
     city: censusCity,
     transitDistrict,
     inMetro,
+    inPortland,
     businessTax,
+    nearBoundaries,
+    needsReview,
     notes,
   });
 }
-
-// ArcGIS "which polygons contain this point?" query.
-async function queryPoint(layerUrl, lon, lat) {
-  const params = new URLSearchParams({
-    geometry: `${lon},${lat}`,
-    geometryType: "esriGeometryPoint",
-    inSR: "4326",
-    spatialRel: "esriSpatialRelIntersects",
-    outFields: "*",
-    returnGeometry: "false",
-    f: "json",
-  });
-  const res = await fetch(`${layerUrl}/query?${params}`);
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-  return data.features || [];
-}
-
-function attrsMention(attrs = {}, pattern) {
-  return Object.values(attrs).some((v) => typeof v === "string" && pattern.test(v.trim()));
-}
-
-function normalizeTransitName(feature) {
-  const text = Object.values(feature.properties || {})
-    .filter((v) => typeof v === "string")
-    .join(" ");
-  for (const [pattern, label] of TRANSIT_NAME_RULES) {
-    if (pattern.test(text)) return label;
-  }
-  return text || "Unnamed transit district";
-}
-
-// ---- Point-in-polygon (ray casting), handles holes and MultiPolygons ----
-function pointInFeature(pt, feature) {
-  const g = feature.geometry;
-  if (!g) return false;
-  if (g.type === "Polygon") return pointInPolygon(pt, g.coordinates);
-  if (g.type === "MultiPolygon") return g.coordinates.some((poly) => pointInPolygon(pt, poly));
-  return false;
-}
-
-function pointInPolygon(pt, rings) {
-  if (!inRing(pt, rings[0])) return false;
-  for (let i = 1; i < rings.length; i++) if (inRing(pt, rings[i])) return false;
-  return true;
-}
-
-function inRing([x, y], ring) {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
-export const _test = { pointInFeature, normalizeTransitName };
