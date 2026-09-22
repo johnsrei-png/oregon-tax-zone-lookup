@@ -111,6 +111,7 @@
   <form class="search" id="searchForm">
     <input type="text" id="address" aria-label="Address" placeholder="1111 NW 5th Place, Canby, OR 97013" autocomplete="off" required>
     <button type="submit" id="searchBtn">Look up</button>
+    <button type="button" id="clearBtn" class="secondary" hidden>Clear</button>
   </form>
   <div id="single"></div>
   <div id="mapWrap" hidden>
@@ -288,6 +289,7 @@ $("searchForm").addEventListener("submit", async (e) => {
   const address = $("address").value.trim();
   $("searchBtn").disabled = true;
   $("single").innerHTML = `<p class="progress">Looking up…</p>`;
+  $("clearBtn").hidden = false;
   try {
     const r = await lookup(address);
     $("single").innerHTML = `
@@ -320,6 +322,23 @@ $("searchForm").addEventListener("submit", async (e) => {
   } finally {
     $("searchBtn").disabled = false;
   }
+});
+
+// Clear: empties the search box and the previous result, then puts the cursor back in the box.
+function clearSearch() {
+  $("address").value = "";
+  $("single").innerHTML = "";
+  $("mapWrap").hidden = true;
+  $("mapStatus").textContent = "";
+  $("clearBtn").hidden = true;
+  $("address").focus();
+}
+$("clearBtn").addEventListener("click", clearSearch);
+$("address").addEventListener("input", () => {
+  $("clearBtn").hidden = !$("address").value && !$("single").innerHTML;
+});
+$("address").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") clearSearch();
 });
 
 // ---------- Batch ----------
