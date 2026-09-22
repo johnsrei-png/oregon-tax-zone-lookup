@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {
@@ -15,25 +17,27 @@
     --muted: #5b6b67;
     --fir: #2f5d50;
     --rule: #c9d3cf;
-    --verify: #9a6212;
+    --verify: #8a560c;
     --verify-bg: #fbf1df;
     --white: #ffffff;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     margin: 0; background: var(--paper); color: var(--ink);
     font-family: "Public Sans", "Segoe UI", Arial, sans-serif;
     font-size: 17px; line-height: 1.5;
   }
-  main { max-width: 860px; margin: 0 auto; padding: 48px 24px 80px; }
+  main { max-width: 900px; margin: 0 auto; padding: 48px 24px 80px; }
   h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.01em; }
   .lede { color: var(--muted); margin: 0 0 32px; max-width: 62ch; }
-  h2 { font-size: 1.15rem; margin: 56px 0 8px; }
+  h2 { font-size: 1.15rem; margin: 64px 0 8px; }
+  a { color: var(--fir); }
 
   form.search { display: flex; gap: 10px; flex-wrap: wrap; }
   input[type=text] {
     flex: 1 1 360px; font: inherit; padding: 14px 16px;
-    border: 2px solid var(--rule); border-radius: 6px; background: var(--white);
+    border: 2px solid var(--rule); border-radius: 6px; background: var(--white); color: var(--ink);
   }
   input[type=text]:focus { outline: none; border-color: var(--fir); }
   button, .file-label {
@@ -41,30 +45,57 @@
     border: 2px solid var(--fir); background: var(--fir); color: var(--white); cursor: pointer;
   }
   button.secondary { background: transparent; color: var(--fir); }
+  button.small { padding: 8px 14px; font-size: .9rem; }
   button:disabled { opacity: .5; cursor: default; }
-  button:focus-visible, .file-label:focus-within, select:focus-visible { outline: 3px solid #8fb5a8; outline-offset: 2px; }
+  button:focus-visible, .file-label:focus-within, select:focus-visible, input[type=checkbox]:focus-visible {
+    outline: 3px solid #8fb5a8; outline-offset: 2px;
+  }
 
   .result { margin-top: 28px; border-top: 3px solid var(--fir); }
-  .matched { color: var(--muted); font-size: .95rem; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .result-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .matched { color: var(--muted); font-size: .95rem; }
   dl { margin: 0; display: grid; grid-template-columns: minmax(180px, 34%) 1fr; }
   dt, dd { margin: 0; padding: 16px 0; border-bottom: 1px solid var(--rule); }
   dt { color: var(--muted); padding-right: 16px; }
   dd { font-size: 1.3rem; font-weight: 700; }
-  .notes { margin-top: 14px; padding: 12px 16px; background: var(--verify-bg); color: var(--verify); border-radius: 6px; }
-  .notes p { margin: 4px 0; }
+
+  .review { margin-top: 16px; padding: 14px 18px; background: var(--verify-bg); color: var(--verify); border-left: 4px solid var(--verify); border-radius: 0 6px 6px 0; }
+  .review h3 { font-size: 1rem; margin: 0 0 6px; }
+  .review p, .review li { margin: 4px 0; }
+  .review ul { margin: 6px 0; padding-left: 20px; }
+  .review .links { margin-top: 10px; color: var(--ink); font-size: .95rem; }
+  .review .links a { margin-right: 14px; white-space: nowrap; }
+
+  #map { height: 340px; margin-top: 20px; border: 1px solid var(--rule); border-radius: 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: .85rem; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 14px; height: 10px; margin-right: 6px; vertical-align: middle; border: 2px solid var(--c); background: color-mix(in srgb, var(--c) 25%, transparent); }
+  .legend .line::before { background: none; border: none; border-top: 2px dashed var(--c); height: 0; }
+  .legend .dot::before { width: 10px; height: 10px; border-radius: 50%; background: var(--c); border-color: #fff; box-shadow: 0 0 0 1px var(--c); }
+  .legend .dots::before { background: none; border: none; border-top: 3px dotted var(--c); height: 0; }
+
   .error { margin-top: 20px; color: #9b2c2c; font-weight: 500; }
 
   .batch-controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; margin-top: 16px; }
   .file-label input { position: absolute; opacity: 0; width: 1px; height: 1px; }
   .col-pick { display: flex; flex-direction: column; font-size: .9rem; color: var(--muted); }
   select { font: inherit; padding: 8px 10px; border: 2px solid var(--rule); border-radius: 6px; background: var(--white); color: var(--ink); }
+  .check { display: flex; align-items: center; gap: 8px; font-size: .95rem; }
   .progress { margin-top: 14px; color: var(--muted); }
+
+  .summary { margin-top: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); border-top: 3px solid var(--fir); }
+  .summary div { padding: 12px 12px 12px 0; border-bottom: 1px solid var(--rule); }
+  .summary b { display: block; font-size: 1.6rem; line-height: 1.1; }
+  .summary span { color: var(--muted); font-size: .9rem; }
+  .summary .flagged b { color: var(--verify); }
+
   .table-wrap { overflow-x: auto; margin-top: 16px; }
-  table { border-collapse: collapse; width: 100%; font-size: .9rem; background: var(--white); }
+  table { border-collapse: collapse; width: 100%; min-width: 1050px; font-size: .9rem; background: var(--white); }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
   th { background: #e7ecea; }
   tr.flag td { background: var(--verify-bg); }
+  tr.hidden { display: none; }
   footer { margin-top: 64px; font-size: .85rem; color: var(--muted); max-width: 70ch; }
+  footer p { margin: 6px 0; }
   @media (max-width: 560px) {
     dl { grid-template-columns: 1fr; }
     dt { border-bottom: none; padding-bottom: 0; }
@@ -82,6 +113,10 @@
     <button type="submit" id="searchBtn">Look up</button>
   </form>
   <div id="single"></div>
+  <div id="mapWrap" hidden>
+    <div id="map" role="img" aria-label="Map of the address and nearby tax boundaries"></div>
+    <div class="legend" id="legend"></div>
+  </div>
 
   <h2>Check a whole spreadsheet</h2>
   <p class="lede" style="margin-bottom:0">Upload an .xlsx or .csv file, pick the address columns, and download the results as Excel.</p>
@@ -90,21 +125,41 @@
     <span id="fileName" class="progress" style="margin:0"></span>
   </div>
   <div class="batch-controls" id="colPickers" hidden></div>
+  <div class="batch-controls" id="headerOpt" hidden>
+    <label class="check"><input type="checkbox" id="hasHeader"> First row has column names</label>
+  </div>
   <div class="batch-controls">
     <button id="runBatch" hidden>Check all addresses</button>
     <button id="download" class="secondary" hidden>Download results</button>
   </div>
   <div class="progress" id="progress"></div>
+  <div id="summary"></div>
+  <div class="batch-controls" id="filterOpt" hidden>
+    <label class="check"><input type="checkbox" id="onlyFlagged"> Show only rows that need review</label>
+  </div>
   <div class="table-wrap" id="batchTable"></div>
 
   <footer>
-    Results come from public boundary data (U.S. Census, Oregon Metro RLIS, and transit district boundary files). They're not an official tax determination. For filings, confirm with the Oregon Department of Revenue and the City of Portland Revenue Division.
+    <p id="freshness"></p>
+    <p>Results come from public boundary data (U.S. Census, Oregon Metro RLIS, and transit district boundary files). They're not an official tax determination. For filings, confirm with the Oregon Department of Revenue and the City of Portland Revenue Division.</p>
   </footer>
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const VERIFY_LINKS = {
+  trimet: ["TriMet district map", "https://trimet.org/taxinfo/"],
+  dor: ["Oregon DOR transit tax guide", "https://www.oregon.gov/dor/forms/formspubs/transit-payroll-taxes_211-503.pdf"],
+  metro: ["Metro SHS tax info", "https://www.oregonmetro.gov/what-metro-does/housing-and-homelessness/supportive-housing-services/pay-my-shs-taxes"],
+  portland: ["Portland Maps (city limits)", "https://www.portlandmaps.com/"],
+};
+
+const DISTRICT_COLORS = {
+  TriMet: "#3b6ea5", SMART: "#7a4fa0", CAT: "#c0702a", SCTD: "#4d8a3e", SAM: "#b0425a", LTD: "#2a8a8a",
+};
+const colorFor = (short) => DISTRICT_COLORS[short] || "#8a8f8d";
 
 async function lookup(address) {
   const res = await fetch(`/api/lookup?address=${encodeURIComponent(address)}`);
@@ -114,7 +169,92 @@ async function lookup(address) {
 }
 const metroText = (v) => v === null ? "Couldn't check" : v ? "Yes" : "No";
 
-// ---- Single lookup ----
+// ---------- Boundaries (map + freshness) ----------
+let boundariesPromise = null;
+function getBoundaries() {
+  if (!boundariesPromise) {
+    boundariesPromise = fetch("/api/boundaries").then((r) => r.json()).catch(() => null);
+  }
+  return boundariesPromise;
+}
+
+function formatDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso + "T12:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+getBoundaries().then((b) => {
+  if (!b?.meta) return;
+  const transit = formatDate(b.meta.transitBoundariesDownloaded);
+  const ltd = formatDate(b.meta.ltdBoundaryDownloaded);
+  $("freshness").textContent =
+    `Transit district boundaries downloaded ${transit || "(date not set)"}. ` +
+    (ltd ? `LTD boundary downloaded ${ltd}. ` : "LTD boundary not added yet. ") +
+    "Metro and Portland boundaries are checked live.";
+});
+
+// ---------- Map ----------
+let map, markerLayer;
+async function showMap(r) {
+  $("mapWrap").hidden = false;
+  if (!map) {
+    map = L.map("map", { scrollWheelZoom: false });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+    const b = await getBoundaries();
+    if (b?.transit) {
+      L.geoJSON(b.transit, {
+        style: (f) => ({ color: colorFor(f.properties.short), weight: 2, fillOpacity: 0.12 }),
+        onEachFeature: (f, layer) => layer.bindTooltip(f.properties.name, { sticky: true }),
+      }).addTo(map);
+    }
+    if (b?.metro) {
+      L.geoJSON(b.metro, { style: { color: "#1c2a28", weight: 2.5, dashArray: "8 6", fill: false }, interactive: false }).addTo(map);
+    }
+    if (b?.portland) {
+      L.geoJSON(b.portland, { style: { color: "#b3261e", weight: 2.5, dashArray: "2 5", fill: false }, interactive: false }).addTo(map);
+    }
+    const shorts = [...new Set((b?.transit?.features || []).map((f) => f.properties.short))]
+      .filter((s) => DISTRICT_COLORS[s]);
+    $("legend").innerHTML =
+      shorts.map((s) => `<span style="--c:${colorFor(s)}">${esc(s)}</span>`).join("") +
+      (b?.metro ? `<span class="line" style="--c:#1c2a28">Metro tax boundary</span>` : "") +
+      (b?.portland ? `<span class="dots" style="--c:#b3261e">City of Portland</span>` : "") +
+      `<span class="dot" style="--c:#1c2a28">Address</span>`;
+    markerLayer = L.layerGroup().addTo(map);
+  }
+  markerLayer.clearLayers();
+  L.circleMarker([r.lat, r.lon], { radius: 8, color: "#ffffff", weight: 3, fillColor: "#1c2a28", fillOpacity: 1 })
+    .bindTooltip(r.matchedAddress)
+    .addTo(markerLayer);
+  map.setView([r.lat, r.lon], r.nearBoundaries.length ? 16 : 14);
+  setTimeout(() => map.invalidateSize(), 0);
+}
+
+// ---------- Single lookup ----------
+function copyText(r) {
+  return [r.matchedAddress, r.transitDistrict, r.county || "", metroText(r.inMetro), r.businessTax].join("\t");
+}
+
+function reviewPanel(r) {
+  if (!r.needsReview) return "";
+  const links = [];
+  if (/trimet/i.test(r.transitDistrict) || r.nearBoundaries.some((n) => /TriMet/.test(n.label))) links.push(VERIFY_LINKS.trimet);
+  links.push(VERIFY_LINKS.dor);
+  if (r.inMetro !== false || r.nearBoundaries.some((n) => /Metro/.test(n.label))) links.push(VERIFY_LINKS.metro);
+  if (/multnomah/i.test(r.county || "") || r.nearBoundaries.some((n) => /Portland/.test(n.label))) links.push(VERIFY_LINKS.portland);
+  return `
+    <div class="review" role="note">
+      <h3>Confirm before relying on this</h3>
+      ${r.nearBoundaries.length ? `<ul>${r.nearBoundaries.map((n) => `<li>${n.feet.toLocaleString()} feet from the ${esc(n.label)}</li>`).join("")}</ul>` : ""}
+      ${r.notes.map((n) => `<p>${esc(n)}</p>`).join("")}
+      <div class="links">Check with: ${links.map(([label, url]) => `<a href="${url}" target="_blank" rel="noopener">${esc(label)}</a>`).join("")}</div>
+    </div>`;
+}
+
 $("searchForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const address = $("address").value.trim();
@@ -124,58 +264,79 @@ $("searchForm").addEventListener("submit", async (e) => {
     const r = await lookup(address);
     $("single").innerHTML = `
       <div class="result">
-        <div class="matched">Matched: ${esc(r.matchedAddress)}</div>
+        <div class="result-head">
+          <span class="matched">Matched: ${esc(r.matchedAddress)}</span>
+          <button class="secondary small" id="copyBtn" type="button">Copy results</button>
+        </div>
         <dl>
           <dt>Transit district</dt><dd>${esc(r.transitDistrict)}</dd>
           <dt>County</dt><dd>${esc(r.county || "Unknown")}</dd>
           <dt>Inside Metro tax boundary</dt><dd>${metroText(r.inMetro)}</dd>
           <dt>Portland/Multnomah business tax</dt><dd>${esc(r.businessTax)}</dd>
         </dl>
-        ${r.notes.length ? `<div class="notes">${r.notes.map((n) => `<p>${esc(n)}</p>`).join("")}</div>` : ""}
+        ${reviewPanel(r)}
       </div>`;
+    $("copyBtn").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(copyText(r));
+        $("copyBtn").textContent = "Copied";
+      } catch {
+        $("copyBtn").textContent = "Copy failed";
+      }
+      setTimeout(() => { if ($("copyBtn")) $("copyBtn").textContent = "Copy results"; }, 2000);
+    });
+    showMap(r);
   } catch (err) {
     $("single").innerHTML = `<p class="error">${esc(err.message)}</p>`;
+    $("mapWrap").hidden = true;
   } finally {
     $("searchBtn").disabled = false;
   }
 });
 
-// ---- Batch ----
+// ---------- Batch ----------
 let rows = [], results = [];
 const PICKS = [["street", "Street"], ["city", "City"], ["state", "State"], ["zip", "ZIP"]];
+const colLetter = (i) => (i >= 26 ? String.fromCharCode(64 + Math.floor(i / 26)) : "") + String.fromCharCode(65 + (i % 26));
 
 $("file").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   $("fileName").textContent = file.name;
   const wb = XLSX.read(await file.arrayBuffer());
-  const ws = wb.Sheets[wb.SheetNames.find((n) => XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1 }).some((r) => r.some(Boolean)))];
-  rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }).filter((r) => r.some((c) => String(c).trim()));
+  const sheetName = wb.SheetNames.find((n) =>
+    XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1 }).some((r) => r.some(Boolean)));
+  rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: "" })
+    .filter((r) => r.some((c) => String(c).trim()));
   const width = Math.max(...rows.map((r) => r.length));
   const guess = guessColumns(rows, width);
+  $("hasHeader").checked = looksLikeHeader(rows, guess);
   $("colPickers").innerHTML = PICKS.map(([key, label]) => `
     <label class="col-pick">${label}
       <select id="col-${key}">
         <option value="">(none)</option>
-        ${Array.from({ length: width }, (_, i) => `<option value="${i}" ${guess[key] === i ? "selected" : ""}>Column ${String.fromCharCode(65 + i)}: ${esc(String(rows[0][i]).slice(0, 24))}</option>`).join("")}
+        ${Array.from({ length: width }, (_, i) => `<option value="${i}" ${guess[key] === i ? "selected" : ""}>Column ${colLetter(i)}: ${esc(String(rows[0][i]).slice(0, 24))}</option>`).join("")}
       </select>
     </label>`).join("");
   $("colPickers").hidden = false;
+  $("headerOpt").hidden = false;
   $("runBatch").hidden = false;
   $("download").hidden = true;
+  $("filterOpt").hidden = true;
+  $("summary").innerHTML = "";
   $("batchTable").innerHTML = "";
   $("progress").textContent = `${rows.length} rows found. Check the column choices, then run.`;
 });
 
 function guessColumns(rows, width) {
-  const sample = rows.slice(0, 10);
+  const sample = rows.slice(0, 12);
   const score = (test) => {
-    let best = -1, bestN = 0;
+    let best, bestN = 0;
     for (let i = 0; i < width; i++) {
       const n = sample.filter((r) => test(String(r[i]).trim())).length;
       if (n > bestN) { bestN = n; best = i; }
     }
-    return best >= 0 ? best : undefined;
+    return best;
   };
   const zip = score((v) => /^\d{5}(-\d{4})?$/.test(v));
   const state = score((v) => /^(OR|Oregon)$/i.test(v));
@@ -184,49 +345,116 @@ function guessColumns(rows, width) {
   return { street, city, state, zip };
 }
 
+function looksLikeHeader(rows, guess) {
+  if (rows.length < 2) return false;
+  const first = rows[0];
+  const zipOk = guess.zip === undefined || /^\d{5}/.test(String(first[guess.zip]).trim());
+  const streetOk = guess.street === undefined || /^\d+\s/.test(String(first[guess.street]).trim());
+  return !(zipOk && streetOk);
+}
+
+const dataRows = () => ($("hasHeader").checked ? rows.slice(1) : rows);
+
 $("runBatch").addEventListener("click", async () => {
   const cols = Object.fromEntries(PICKS.map(([k]) => [k, $(`col-${k}`).value]));
   const addrOf = (r) => ["street", "city", "state", "zip"]
     .map((k) => cols[k] === "" ? "" : String(r[+cols[k]]).trim()).filter(Boolean).join(", ");
+  const list = dataRows();
 
   $("runBatch").disabled = true;
-  results = new Array(rows.length);
+  $("summary").innerHTML = "";
+  $("batchTable").innerHTML = "";
+  results = new Array(list.length);
   let done = 0, next = 0;
   const worker = async () => {
-    while (next < rows.length) {
+    while (next < list.length) {
       const i = next++;
-      const address = addrOf(rows[i]);
+      const address = addrOf(list[i]);
       try { results[i] = await lookup(address); }
-      catch (err) { results[i] = { input: address, error: err.message, notes: [] }; }
+      catch (err) { results[i] = { input: address, error: err.message, notes: [], nearBoundaries: [], needsReview: true }; }
       done++;
-      $("progress").textContent = `Checked ${done} of ${rows.length}…`;
+      $("progress").textContent = `Checked ${done} of ${list.length}…`;
     }
   };
   await Promise.all([worker(), worker(), worker()]); // 3 at a time to go easy on the public services
-  $("progress").textContent = `Done. ${results.filter((r) => r.error || r.notes.length).length} rows need a closer look (highlighted).`;
+  $("progress").textContent = "";
+  renderSummary();
   renderTable();
+  $("filterOpt").hidden = false;
   $("runBatch").disabled = false;
   $("download").hidden = false;
 });
 
-function resultCells(r) {
-  if (r.error) return ["", "", "", "", "", r.error];
-  return [r.matchedAddress, r.transitDistrict, r.county, metroText(r.inMetro), r.businessTax, r.notes.join(" ")];
+function shortDistrict(name) {
+  const m = /\(([^)]+)\)\s*$/.exec(name || "");
+  return m ? m[1] : name;
 }
-const RESULT_HEADERS = ["Matched address", "Transit district", "County", "In Metro tax boundary", "Portland/Multnomah business tax", "Notes"];
+
+function renderSummary() {
+  const counts = {};
+  for (const r of results) {
+    if (r.error) continue;
+    const key = r.transitDistrict.startsWith("Likely") ? "LTD (likely)" : shortDistrict(r.transitDistrict);
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  const flagged = results.filter((r) => r.needsReview).length;
+  const failed = results.filter((r) => r.error).length;
+  const inMetro = results.filter((r) => r.inMetro).length;
+  const bizTax = results.filter((r) => r.businessTax && r.businessTax.startsWith("Yes")).length;
+  const cells = [
+    ...Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => [n, k === "None of the listed districts" ? "No listed district" : k]),
+    [inMetro, "Inside Metro tax boundary"],
+    [bizTax, "Portland/Multnomah business tax"],
+  ];
+  $("summary").innerHTML = `<div class="summary">
+    <div class="flagged"><b>${flagged}</b><span>Need review${failed ? ` (${failed} not found)` : ""}</span></div>
+    ${cells.map(([n, label]) => `<div><b>${n}</b><span>${esc(label)}</span></div>`).join("")}
+  </div>`;
+}
+
+const RESULT_HEADERS = ["Matched address", "Transit district", "County", "In Metro tax boundary", "Portland/Multnomah business tax", "Near a boundary", "Needs review", "Notes"];
+
+function resultCells(r) {
+  const near = (r.nearBoundaries || []).map((n) => `${n.feet} ft from ${n.label}`).join("; ");
+  if (r.error) return ["", "", "", "", "", "", "Yes", r.error];
+  return [r.matchedAddress, r.transitDistrict, r.county, metroText(r.inMetro), r.businessTax, near, r.needsReview ? "Yes" : "No", r.notes.join(" ")];
+}
+
+// On screen, highlighting marks rows needing review, so that column and the
+// generic "near a boundary" note are left out to keep the table readable.
+const TABLE_HEADERS = ["Address checked", "Transit district", "County", "Metro tax", "Business tax", "Near a boundary", "Notes"];
+function tableCells(r) {
+  const near = (r.nearBoundaries || []).map((n) => `${n.feet} ft from ${n.label}`).join("; ");
+  if (r.error) return [r.input, "", "", "", "", "", r.error];
+  const notes = r.notes.filter((n) => !n.startsWith("Within ")).join(" ");
+  return [r.matchedAddress || r.input, r.transitDistrict, r.county, metroText(r.inMetro), r.businessTax, near, notes];
+}
 
 function renderTable() {
   $("batchTable").innerHTML = `<table>
-    <thead><tr><th>Address checked</th>${RESULT_HEADERS.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
-    <tbody>${results.map((r) => `<tr class="${r.error || r.notes.length ? "flag" : ""}"><td>${esc(r.input)}</td>${resultCells(r).map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody>
+    <thead><tr>${TABLE_HEADERS.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+    <tbody>${results.map((r) => `<tr class="${r.needsReview ? "flag" : ""}" data-flag="${r.needsReview ? 1 : 0}">${tableCells(r).map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody>
   </table>`;
+  applyFilter();
 }
+
+function applyFilter() {
+  const only = $("onlyFlagged").checked;
+  document.querySelectorAll("#batchTable tbody tr").forEach((tr) => {
+    tr.classList.toggle("hidden", only && tr.dataset.flag !== "1");
+  });
+}
+$("onlyFlagged").addEventListener("change", applyFilter);
 
 $("download").addEventListener("click", () => {
   const width = Math.max(...rows.map((r) => r.length));
-  const header = [...Array.from({ length: width }, (_, i) => `Column ${String.fromCharCode(65 + i)}`), ...RESULT_HEADERS];
-  const out = rows.map((r, i) => [...Array.from({ length: width }, (_, j) => r[j] ?? ""), ...resultCells(results[i])]);
-  const ws = XLSX.utils.aoa_to_sheet([header, ...out]);
+  const list = dataRows();
+  const original = $("hasHeader").checked
+    ? Array.from({ length: width }, (_, i) => String(rows[0][i] ?? "").trim() || `Column ${colLetter(i)}`)
+    : Array.from({ length: width }, (_, i) => `Column ${colLetter(i)}`);
+  const out = list.map((r, i) => [...Array.from({ length: width }, (_, j) => r[j] ?? ""), ...resultCells(results[i])]);
+  const ws = XLSX.utils.aoa_to_sheet([[...original, ...RESULT_HEADERS], ...out]);
+  ws["!cols"] = [...original, ...RESULT_HEADERS].map((h) => ({ wch: Math.min(40, Math.max(12, h.length + 2)) }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Results");
   XLSX.writeFile(wb, "tax-district-results.xlsx");
