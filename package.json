@@ -1,0 +1,7 @@
+{
+  "name": "oregon-tax-district-lookup",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Look up transit district, county, Metro tax and Portland/Multnomah business tax status for Oregon addresses."
+}
