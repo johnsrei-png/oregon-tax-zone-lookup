@@ -9,3 +9,8 @@
   from = "/api/lookup"
   to = "/.netlify/functions/lookup"
   status = 200
+
+[[redirects]]
+  from = "/api/boundaries"
+  to = "/.netlify/functions/boundaries"
+  status = 200
