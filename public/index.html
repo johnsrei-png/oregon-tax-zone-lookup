@@ -116,6 +116,7 @@
   <div id="mapWrap" hidden>
     <div id="map" role="img" aria-label="Map of the address and nearby tax boundaries"></div>
     <div class="legend" id="legend"></div>
+    <p class="progress" id="mapStatus" role="status"></p>
   </div>
 
   <h2>Check a whole spreadsheet</h2>
@@ -173,7 +174,9 @@ const metroText = (v) => v === null ? "Couldn't check" : v ? "Yes" : "No";
 let boundariesPromise = null;
 function getBoundaries() {
   if (!boundariesPromise) {
-    boundariesPromise = fetch("/api/boundaries").then((r) => r.json()).catch(() => null);
+    boundariesPromise = fetch("/api/boundaries")
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
   }
   return boundariesPromise;
 }
@@ -195,43 +198,68 @@ getBoundaries().then((b) => {
 });
 
 // ---------- Map ----------
-let map, markerLayer;
-async function showMap(r) {
-  $("mapWrap").hidden = false;
-  if (!map) {
-    map = L.map("map", { scrollWheelZoom: false });
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    }).addTo(map);
-    const b = await getBoundaries();
-    if (b?.transit) {
-      L.geoJSON(b.transit, {
-        style: (f) => ({ color: colorFor(f.properties.short), weight: 2, fillOpacity: 0.12 }),
-        onEachFeature: (f, layer) => layer.bindTooltip(f.properties.name, { sticky: true }),
-      }).addTo(map);
-    }
-    if (b?.metro) {
-      L.geoJSON(b.metro, { style: { color: "#1c2a28", weight: 2.5, dashArray: "8 6", fill: false }, interactive: false }).addTo(map);
-    }
-    if (b?.portland) {
-      L.geoJSON(b.portland, { style: { color: "#b3261e", weight: 2.5, dashArray: "2 5", fill: false }, interactive: false }).addTo(map);
-    }
-    const shorts = [...new Set((b?.transit?.features || []).map((f) => f.properties.short))]
-      .filter((s) => DISTRICT_COLORS[s]);
-    $("legend").innerHTML =
-      shorts.map((s) => `<span style="--c:${colorFor(s)}">${esc(s)}</span>`).join("") +
-      (b?.metro ? `<span class="line" style="--c:#1c2a28">Metro tax boundary</span>` : "") +
-      (b?.portland ? `<span class="dots" style="--c:#b3261e">City of Portland</span>` : "") +
-      `<span class="dot" style="--c:#1c2a28">Address</span>`;
-    markerLayer = L.layerGroup().addTo(map);
+// The map and pin appear right away; boundary shapes are added whenever they arrive,
+// so a slow or failed boundary download never leaves an empty box.
+let map, markerLayer, boundariesAdded = false;
+
+function initMap() {
+  map = L.map("map", { scrollWheelZoom: false });
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }).addTo(map);
+  markerLayer = L.layerGroup().addTo(map);
+}
+
+function addBoundaries(b) {
+  if (boundariesAdded) return;
+  if (!b || !b.transit) {
+    $("mapStatus").textContent = "District boundaries couldn't be loaded, so only the address is shown.";
+    return;
   }
-  markerLayer.clearLayers();
-  L.circleMarker([r.lat, r.lon], { radius: 8, color: "#ffffff", weight: 3, fillColor: "#1c2a28", fillOpacity: 1 })
-    .bindTooltip(r.matchedAddress)
-    .addTo(markerLayer);
-  map.setView([r.lat, r.lon], r.nearBoundaries.length ? 16 : 14);
-  setTimeout(() => map.invalidateSize(), 0);
+  boundariesAdded = true;
+  L.geoJSON(b.transit, {
+    style: (f) => ({ color: colorFor(f.properties.short), weight: 2, fillOpacity: 0.12 }),
+    onEachFeature: (f, layer) => layer.bindTooltip(f.properties.name, { sticky: true }),
+  }).addTo(map);
+  if (b.metro) {
+    L.geoJSON(b.metro, { style: { color: "#1c2a28", weight: 2.5, dashArray: "8 6", fill: false }, interactive: false }).addTo(map);
+  }
+  if (b.portland) {
+    L.geoJSON(b.portland, { style: { color: "#b3261e", weight: 2.5, dashArray: "2 5", fill: false }, interactive: false }).addTo(map);
+  }
+  markerLayer.eachLayer((l) => l.bringToFront && l.bringToFront());
+  const shorts = [...new Set(b.transit.features.map((f) => f.properties.short))].filter((s) => DISTRICT_COLORS[s]);
+  $("legend").innerHTML =
+    shorts.map((s) => `<span style="--c:${colorFor(s)}">${esc(s)}</span>`).join("") +
+    (b.metro ? `<span class="line" style="--c:#1c2a28">Metro tax boundary</span>` : "") +
+    (b.portland ? `<span class="dots" style="--c:#b3261e">City of Portland</span>` : "") +
+    `<span class="dot" style="--c:#1c2a28">Address</span>`;
+  $("mapStatus").textContent = b.metro ? "" : "Metro and Portland lines couldn't be loaded right now; transit districts are shown.";
+}
+
+function showMap(r) {
+  $("mapWrap").hidden = false;
+  if (typeof L === "undefined") {
+    $("mapStatus").textContent = "The map library didn't load. Try reloading the page.";
+    return;
+  }
+  try {
+    if (!map) initMap();
+    markerLayer.clearLayers();
+    L.circleMarker([r.lat, r.lon], { radius: 8, color: "#ffffff", weight: 3, fillColor: "#1c2a28", fillOpacity: 1 })
+      .bindTooltip(r.matchedAddress)
+      .addTo(markerLayer);
+    map.setView([r.lat, r.lon], r.nearBoundaries.length ? 16 : 14);
+    setTimeout(() => map.invalidateSize(), 0);
+    if (!boundariesAdded) {
+      $("mapStatus").textContent = "Loading district boundaries…";
+      getBoundaries().then(addBoundaries);
+    }
+  } catch (err) {
+    console.error(err);
+    $("mapStatus").textContent = `The map ran into a problem: ${err.message}`;
+  }
 }
 
 // ---------- Single lookup ----------
